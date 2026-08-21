@@ -224,6 +224,17 @@ input,textarea,select{font-family:inherit;}
 .addrow .note{flex:1;}
 .addrow button{background:var(--ink);color:#fff;border-radius:13px;padding:12px 17px;font-weight:800;font-size:13.5px;flex-shrink:0;}
 .msum{display:flex;gap:8px;margin:12px 0 4px;}
+.tip{font-size:11px;font-weight:600;color:var(--ink-3);margin:-4px 0 12px;line-height:1.4;}
+.copy-est{
+  width:100%;padding:11px;border-radius:13px;margin:-2px 0 12px;
+  background:#FFF6EC;color:var(--wait);border:1.5px dashed #EBCDA0;
+  font-size:12.5px;font-weight:800;transition:.15s;
+}
+.copy-est:active{transform:scale(.985);background:#FDF1DC;}
+.bbar{height:8px;border-radius:99px;background:#EFE6DA;overflow:hidden;margin:4px 0 7px;}
+.bbar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--saffron),var(--coral));transition:width .5s cubic-bezier(.4,0,.2,1);}
+.bbar.over i{background:linear-gradient(90deg,#E4694A,#D0453F);}
+.bnote{font-size:11px;font-weight:700;color:var(--ink-2);margin-bottom:6px;}
 .msum div{flex:1;background:#F8F4EE;border-radius:14px;padding:10px;text-align:center;}
 .msum .k{font-size:8.5px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--ink-3);}
 .msum .v{font-size:14.5px;font-weight:800;margin-top:3px;letter-spacing:-.4px;}
@@ -369,30 +380,55 @@ function normalise(l){
   }));
 }
 
-/* ═══ STATUS ENGINE ═══ */
+/* ═══ STATUS ENGINE ═══
+   "Karna Hai"  = booking/estimate abhi baaki hai
+   "Ho Gaya"    = advance de diya (paisa baaki ho sakta hai, kaam ho gaya)
+   Budget       = estimate ya actual, jo bada ho                        */
 function calc(it){
+  const est=num(it.estimate);
+
   if(it.type==='running'){
     const spent=it.entries.reduce((s,e)=>s+num(e.amount),0);
     const paid=it.entries.filter(e=>e.paid).reduce((s,e)=>s+num(e.amount),0);
-    const due=spent-paid;
-    let tag,tone,meta;
-    if(!it.entries.length){tag='Shuru nahi';tone='none';meta='＋ dabakar kharcha add karein';}
-    else if(due>0){tag='Udhaar';tone='wait';meta=it.entries.length+' kharche · '+money(spent)+' total';}
-    else{tag='Settled';tone='done';meta=it.entries.length+' kharche · pura chukaya';}
-    return{committed:spent,paid,due,tag,tone,
-      needsAction:due>0||!it.entries.length,
-      amt:due>0?money(due):(it.entries.length?money(spent):'—'),
-      amtTone:due>0?'wait':(it.entries.length?'done':'none'),meta};
+    const udhaar=spent-paid;
+    const committed=Math.max(est,spent);       // budget = anuman ya actual
+    const due=Math.max(0,committed-paid);
+    const left=Math.max(0,est-spent);          // budget me kitna bacha
+    let tag,tone,meta,need;
+
+    if(!it.entries.length&&est<=0){
+      tag='Shuru nahi';tone='todo';need=true;meta='Anuman daalein ya ＋ se kharcha add karein';
+    }else if(udhaar>0){
+      tag='Udhaar';tone='todo';need=true;meta=money(spent)+' kharcha · '+money(udhaar)+' dena hai';
+    }else if(est>0&&spent<est){
+      tag='Budget baaki';tone='wait';need=true;
+      meta=it.entries.length?money(spent)+' of '+money(est)+' kharcha hua':'Anuman '+money(est)+' · kharcha shuru nahi';
+    }else{
+      tag='Ho gaya';tone='done';need=false;meta=it.entries.length+' kharche · '+money(spent)+' pura chukaya';
+    }
+    return{committed,paid,due,udhaar,est,spent,left,tag,tone,needsAction:need,
+      amt:udhaar>0?money(udhaar):(est>0&&spent<est?money(left):(spent?money(spent):'—')),
+      amtTone:udhaar>0?'todo':(est>0&&spent<est?'wait':(spent?'done':'none')),meta};
   }
-  const total=num(it.total),adv=num(it.advance),due=Math.max(0,total-adv);
+
+  const total=num(it.total), amount=total||est, adv=num(it.advance);
+  const committed=amount, paid=Math.min(adv,committed||adv), due=Math.max(0,committed-paid);
   let tag,tone,meta,need;
-  if(!it.booked){tag='Book karein';tone='todo';need=true;meta=total?'Quote '+money(total)+' · ○ dabayein':'○ dabakar booked karein';}
-  else if(!total){tag='Amount daalein';tone='wait';need=true;meta='Booked · amount likhna baaki';}
-  else if(adv<=0){tag='Payment baaki';tone='todo';need=true;meta='Quote '+money(total)+' · advance nahi diya';}
-  else if(adv<total){tag='Advance diya';tone='wait';need=true;meta=money(adv)+' diya of '+money(total);}
-  else{tag='Pura diya';tone='done';need=false;meta=money(total)+' · full payment';}
-  return{committed:total,paid:Math.min(adv,total||adv),due,tag,tone,needsAction:need,
-    amt:total?money(due):'—',amtTone:due>0?(adv>0?'wait':'todo'):(total?'done':'none'),meta};
+
+  if(!it.booked){
+    tag='Book karein';tone='todo';need=true;
+    meta=amount?(total?'Quote ':'Anuman ')+money(amount)+' · ○ dabayein':'○ dabakar booked karein';
+  }else if(!amount){
+    tag='Amount daalein';tone='todo';need=true;meta='Booked · amount likhna baaki';
+  }else if(adv<=0){
+    tag='Advance dena hai';tone='todo';need=true;meta=money(amount)+' · advance nahi diya';
+  }else if(adv<committed){
+    tag='Advance diya';tone='wait';need=false;meta=money(adv)+' diya · '+money(due)+' baaki';
+  }else{
+    tag='Pura diya';tone='done';need=false;meta=money(committed)+' · full payment';
+  }
+  return{committed,paid,due,udhaar:0,est,spent:adv,left:0,tag,tone,needsAction:need,
+    amt:amount?money(due):'—',amtTone:due>0?'wait':(amount?'done':'none'),meta};
 }
 
 /* ═══ FIREBASE ═══ */
@@ -489,19 +525,30 @@ function cardHtml(it){
     <div class="hint-line ${it.booked?'ok':''}">${it.booked?'✓ Book ho chuka hai':'○ Upar wale circle par tap karke booked karein'}</div>
     ${partial?`<button class="big-act" data-a="payfull">✓ Pura payment de diya (${money(c.due)} aur)</button>`:''}
     <div class="g2">
-      <div class="f"><label>Total Amount</label><input type="number" inputmode="decimal" data-f="total" value="${esc(it.total)}" placeholder="0"></div>
-      <div class="f"><label>Advance Diya</label><input type="number" inputmode="decimal" data-f="advance" value="${esc(it.advance)}" placeholder="0"></div>
+      <div class="f"><label>Anuman (guess)</label><input type="number" inputmode="decimal" data-f="estimate" value="${esc(it.estimate)}" placeholder="0"></div>
+      <div class="f"><label>Final Quote</label><input type="number" inputmode="decimal" data-f="total" value="${esc(it.total)}" placeholder="0"></div>
     </div>
+    ${(num(it.estimate)>0&&num(it.total)!==num(it.estimate))
+      ? `<button class="copy-est" data-a="useest">⤵ Anuman hi final quote hai — ${money(it.estimate)} bhar dein</button>`
+      : `<p class="tip">Quote pata na ho to sirf anuman bhar dein — budget me wahi count hoga.</p>`}
     <div class="g2">
-      <div class="f hl"><label>Baaki</label><input type="text" value="${money(c.due)}" disabled></div>
+      <div class="f"><label>Advance Diya</label><input type="number" inputmode="decimal" data-f="advance" value="${esc(it.advance)}" placeholder="0"></div>
       <div class="f"><label>Advance Date</label><input type="date" data-f="advDate" value="${esc(it.advDate)}"></div>
-    </div>`;
+    </div>
+    <div class="f hl" style="margin-bottom:11px"><label>Baaki dena hai</label><input type="text" value="${money(c.due)}" disabled></div>`;
 
+  const bpct=c.est>0?Math.min(100,c.spent/c.est*100):0;
+  const over=c.est>0&&c.spent>c.est;
   const runBody=`
+    <div class="f" style="margin:13px 0 4px"><label>Anuman / Budget (guess)</label>
+      <input type="number" inputmode="decimal" data-f="estimate" value="${esc(it.estimate)}" placeholder="Kitna lagega, andaza?"></div>
+    <p class="tip">Anuman badhayenge to item wapas "Karna Hai" me aa jayega.</p>
+    ${c.est>0?`<div class="bbar ${over?'over':''}"><i style="width:${bpct}%"></i></div>
+      <div class="bnote">${over?'⚠️ Anuman se '+money(c.spent-c.est)+' zyada kharcha':money(c.left)+' budget abhi bacha hai'}</div>`:''}
     <div class="msum">
-      <div><div class="k">Kharcha</div><div class="v">${money(c.committed)}</div></div>
+      <div><div class="k">Kharcha</div><div class="v">${money(c.spent)}</div></div>
       <div class="paid"><div class="k">Chukaya</div><div class="v">${money(c.paid)}</div></div>
-      <div class="due"><div class="k">Udhaar</div><div class="v">${money(c.due)}</div></div>
+      <div class="due"><div class="k">Udhaar</div><div class="v">${money(c.udhaar)}</div></div>
     </div>
     <div class="log-t">Kharche ki list</div>
     ${it.entries.length?it.entries.map(entHtml).join(''):'<div style="font-size:12px;font-weight:600;color:var(--ink-3);padding:2px 2px 4px">Abhi koi kharcha add nahi kiya.</div>'}
@@ -510,9 +557,7 @@ function cardHtml(it){
       <input class="note" type="text" placeholder="Kis cheez ka?" data-f="newNote">
       <button data-a="addentry">Add</button>
     </div>
-    ${c.due>0?`<button class="big-act" style="margin-top:11px" data-a="settleall">✓ Saara udhaar chuka diya (${money(c.due)})</button>`:''}
-    <div class="f" style="margin-top:12px"><label>Anuman / Estimate (optional)</label>
-      <input type="number" inputmode="decimal" data-f="estimate" value="${esc(it.estimate)}" placeholder="Agar andaza ho to"></div>`;
+    ${c.udhaar>0?`<button class="big-act" style="margin-top:11px" data-a="settleall">✓ Saara udhaar chuka diya (${money(c.udhaar)})</button>`:''}`;
 
   return `<details class="card ${c.tone==='todo'?'todo':''}" data-id="${it.id}" ${op}>
     <summary class="c-head">
@@ -585,6 +630,7 @@ list.addEventListener('click',async e=>{
     if(f){f.focus();f.scrollIntoView({behavior:'smooth',block:'center'});}
     return;}
   else if(a==='payfull'){it.advance=num(it.total);toast('✓ Pura payment ho gaya');}
+  else if(a==='useest'){it.total=num(it.estimate);toast('✓ Final quote set ho gaya');}
   else if(a==='settleall'){it.entries.forEach(x=>x.paid=true);toast('✓ Saara udhaar chuka diya');}
   else if(a==='addentry'){
     const A=card.querySelector('[data-f="newAmt"]'),N=card.querySelector('[data-f="newNote"]');
