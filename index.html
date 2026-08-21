@@ -134,12 +134,6 @@
 </header>
 <div class="toran"></div>
 
-<div class="setup-banner" id="setup-banner" style="display:none;">
-  <b>⚠️ Ek zaroori step:</b>
-  Yeh page abhi tak kisi shared data se connect nahi hai. Neeche button dabayein — ek naya shared tracker ban jayega aur link (URL) apne aap update ho jayega. Uske baad wahi final link (address bar se) copy karke WhatsApp par bhejein — sab usi link se same data dekhenge.
-  <div style="margin-top:10px;"><button id="setup-btn" style="background:var(--maroon);color:#fff;border:none;padding:10px 16px;border-radius:10px;font-weight:600;font-size:13px;">🔗 Shared Tracker Banayein</button></div>
-</div>
-
 <div class="summary">
   <div class="stat"><div class="label">Total Budget</div><div class="value" id="stat-total">₹0</div></div>
   <div class="stat paid"><div class="label">Diya Gaya</div><div class="value" id="stat-paid">₹0</div></div>
@@ -159,10 +153,12 @@
 <button class="fab" id="fab" title="Add item">+</button>
 <div class="toast" id="toast"></div>
 
-<p class="footnote">Data ek free shared storage (jsonblob.com) mein save hota hai. Yeh important ya sensitive financial documents ke liye nahi hai — sirf family ke andar kharcha track karne ke liye.</p>
+<p class="footnote">Data Firebase (Google) ke free shared database mein save hota hai. Yeh important ya sensitive financial documents ke liye nahi hai — sirf family ke andar kharcha track karne ke liye.</p>
 
 <script>
-const JSONBLOB_BASE = 'https://jsonblob.com/api/jsonBlob';
+// Firebase Realtime Database URL — data is stored at {FIREBASE_DB_URL}/items.json
+const FIREBASE_DB_URL = 'https://shaadi-tracker-default-rtdb.firebaseio.com';
+const ITEMS_PATH = `${FIREBASE_DB_URL}/items.json`;
 
 const CATEGORIES = [
   {id:'venue', name:'Venue, Vendors & Ceremony', icon:'🎪'},
@@ -199,8 +195,6 @@ const DEFAULT_ITEMS = [
 let items = [];
 let deleteTargetId = null;
 let activeFilter = 'all';
-let blobId = null;
-let saveTimer = null;
 
 function uid(){ return 'it_' + Math.random().toString(36).slice(2,10); }
 function makeItem(name, category){ return { id:uid(), name, category:category||'other', total:'', advance:'', dateOfAdvance:'', booked:false, remark:'' }; }
@@ -212,87 +206,46 @@ function setStatus(msg, isErr){
   el.className = 'status' + (isErr ? ' err' : '');
 }
 
-function getBlobIdFromUrl(){
-  const params = new URLSearchParams(window.location.search);
-  return params.get('blob');
+async function fetchItemsFromFirebase(){
+  const res = await fetch(ITEMS_PATH);
+  if(!res.ok) throw new Error('fetch failed: ' + res.status);
+  return await res.json(); // null if nothing saved yet
 }
 
-async function createNewBlob(initialItems){
-  const res = await fetch(JSONBLOB_BASE, {
-    method: 'POST',
-    headers: {'Content-Type':'application/json','Accept':'application/json'},
-    body: JSON.stringify(initialItems)
-  });
-  if(!res.ok) throw new Error('create failed');
-  const location = res.headers.get('Location') || res.headers.get('location');
-  const id = location ? location.split('/').pop() : null;
-  if(!id) throw new Error('no id returned');
-  return id;
-}
-
-async function fetchBlob(id){
-  const res = await fetch(`${JSONBLOB_BASE}/${id}`, { headers:{'Accept':'application/json'} });
-  if(!res.ok) throw new Error('fetch failed');
-  return await res.json();
-}
-
-async function putBlob(id, data){
-  const res = await fetch(`${JSONBLOB_BASE}/${id}`, {
-    method:'PUT',
-    headers:{'Content-Type':'application/json','Accept':'application/json'},
+async function pushItemsToFirebase(data){
+  const res = await fetch(ITEMS_PATH, {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json'},
     body: JSON.stringify(data)
   });
-  if(!res.ok) throw new Error('save failed');
+  if(!res.ok) throw new Error('save failed: ' + res.status);
 }
 
 async function loadItems(){
-  blobId = getBlobIdFromUrl();
-  if(!blobId){
-    // No shared tracker linked yet on this page load
-    items = DEFAULT_ITEMS.map(([name,cat])=>makeItem(name,cat));
-    document.getElementById('setup-banner').style.display = 'block';
-    setStatus('⚠️ Shared tracker abhi banaya nahi gaya');
-    return;
-  }
   try{
     setStatus('Loading shared data...');
-    items = await fetchBlob(blobId);
+    const remote = await fetchItemsFromFirebase();
+    if(remote && Array.isArray(remote) && remote.length > 0){
+      items = remote;
+    } else {
+      // First ever load — seed with default checklist
+      items = DEFAULT_ITEMS.map(([name,cat])=>makeItem(name,cat));
+      await pushItemsToFirebase(items);
+    }
     setStatus('✓ Connected — sab family isi link se update dekhega');
   }catch(e){
     setStatus('⚠️ Data load nahi hua, page refresh karein', true);
-    items = [];
+    items = DEFAULT_ITEMS.map(([name,cat])=>makeItem(name,cat));
   }
 }
 
 async function saveItems(){
-  if(!blobId) return;
   try{
-    await putBlob(blobId, items);
+    await pushItemsToFirebase(items);
   }catch(e){
     showToast('⚠️ Save fail hua — internet check karein');
   }
 }
-
-document.getElementById('setup-btn').addEventListener('click', async ()=>{
-  const btn = document.getElementById('setup-btn');
-  btn.disabled = true;
-  btn.textContent = 'Bana rahe hain...';
-  try{
-    const id = await createNewBlob(items);
-    blobId = id;
-    const url = new URL(window.location.href);
-    url.searchParams.set('blob', id);
-    window.history.replaceState({}, '', url.toString());
-    document.getElementById('setup-banner').style.display = 'none';
-    setStatus('✓ Shared tracker ban gaya — yeh link copy karein aur share karein');
-    showToast('✓ Ban gaya! Ab address bar se link copy karein');
-    render();
-  }catch(e){
-    btn.disabled = false;
-    btn.textContent = '🔗 Shared Tracker Banayein';
-    showToast('⚠️ Kuch galat hua, dobara try karein');
-  }
-});
 
 function showToast(msg){
   const t=document.getElementById('toast');
